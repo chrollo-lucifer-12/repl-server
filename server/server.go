@@ -12,14 +12,15 @@ type Server struct {
 
 func NewServer(l logger.Logger) ServerManager {
 	r := gin.Default()
-	r.GET("/me", func(c *gin.Context) {
-		c.Writer.Write([]byte("hi"))
-	})
-	r.GET("/ws", wsHandler)
+
 	return &Server{r: r, l: l}
 }
 
 func (s *Server) Start() error {
+	s.r.GET("/me", func(c *gin.Context) {
+		c.Writer.Write([]byte("hi"))
+	})
+	s.r.GET("/ws", s.wsHandler)
 	s.l.Info("server running on port :", "3000")
 	err := s.r.Run(":3000")
 	return err
