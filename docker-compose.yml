@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+      - go_cache:/go/pkg/mod
+    ports:
+      - "3000:3000"
+
+volumes:
+  go_cache:

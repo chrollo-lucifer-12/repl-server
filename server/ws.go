@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 
@@ -24,13 +25,47 @@ func (s *Server) wsHandler(c *gin.Context) {
 	}
 	s.l.Info("new connection :", conn.RemoteAddr().String())
 	defer conn.Close()
+
 	for {
-		messageType, msg, err := conn.ReadMessage()
+		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			s.l.Error("read error:", err)
 			return
 		}
 
-		s.l.Info("received message:", string(msg), "type:", messageType)
+		var msgData map[string]interface{}
+		if err := json.Unmarshal(msg, &msgData); err != nil {
+			s.l.Error("invalid JSON message:", err)
+			continue
+		}
+
+		if msgData["type"] == "execute" {
+			cmd, ok := msgData["command"].(string)
+			if !ok {
+				s.l.Error("invalid command format")
+				continue
+			}
+
+			s.l.Info("executing command ", cmd)
+			res, err := s.t.Run(cmd)
+			if err != nil {
+				s.l.Error("execution error:", err)
+			}
+
+			response := map[string]interface{}{
+				"type":   "response",
+				"result": res,
+			}
+
+			formatted, err := json.MarshalIndent(response, "", "  ")
+			if err != nil {
+				s.l.Error("json marshal error:", err)
+				continue
+			}
+
+			if err := conn.WriteMessage(websocket.TextMessage, formatted); err != nil {
+				s.l.Error("write error:", err)
+			}
+		}
 	}
 }
