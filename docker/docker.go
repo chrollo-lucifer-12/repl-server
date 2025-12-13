@@ -75,25 +75,36 @@ func (d *DockerClient) ExecCommand(ctx context.Context, containerId string, cmd 
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStdin:  true,
+		TTY:          true,
 	})
 	if err != nil {
 		return err
 	}
-	resp, err := d.dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+	resp, err := d.dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{TTY: true})
 	if err != nil {
 		return err
 	}
 	defer resp.Close()
-
-	return utils.ReadDockerOutput(resp.Reader, outputWriter)
+	if outputWriter == nil {
+		_, err = io.Copy(io.Discard, resp.Reader)
+	} else {
+		_, err = io.Copy(outputWriter, resp.Reader)
+	}
+	return err
 }
 
-func (d *DockerClient) WriteFile(ctx context.Context, containerID, path string, content string, outputWriter io.Writer) error {
-	cmd := []string{"sh", "-c", "printf \"" + content + "\" > " + path}
-	if err := d.ExecCommand(ctx, containerID, cmd, outputWriter); err != nil {
-		return err
+func (d *DockerClient) WriteFile(
+	ctx context.Context,
+	containerID, path, content string,
+	outputWriter io.Writer,
+) error {
+
+	cmd := []string{
+		"sh",
+		"-c",
+		fmt.Sprintf("cat > %s << 'EOF'\n%s\nEOF", path, content),
 	}
-	return nil
+	return d.ExecCommand(ctx, containerID, cmd, outputWriter)
 }
 
 func (d *DockerClient) ReadFile(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
@@ -115,7 +126,17 @@ func (d *DockerClient) RemoveFile(ctx context.Context, path string, containerId 
 }
 
 func (d *DockerClient) ListFiles(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
-	cmd := []string{"ls", "-lA", path}
+
+	cmd := []string{
+		"sh", "-c",
+		fmt.Sprintf(`
+for f in %s/* %s/.*; do
+  [ -e "$f" ] || continue
+  stat -c '{"name":"%%n","type":"%%F","size":%%s,"mode":"%%a"}' "$f"
+done
+`, path, path),
+	}
+
 	var buf bytes.Buffer
 	if err := d.ExecCommand(ctx, containerID, cmd, &buf); err != nil {
 		return err
@@ -154,6 +175,39 @@ func (d *DockerClient) ListFiles(ctx context.Context, containerID, path string, 
 	return nil
 }
 
+func (d *DockerClient) StatFile(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
+	cmd := []string{"stat", "-c", "%F %s %a", path}
+	var buf bytes.Buffer
+	if err := d.ExecCommand(ctx, containerID, cmd, &buf); err != nil {
+		return err
+	}
+	var fileType string
+	var size int64
+	var mode string
+	fmt.Sscanf(buf.String(), "%s %d %s", &fileType, &size, &mode)
+	info := &FileInfo{
+		Name: path,
+		Type: fileType,
+		Size: size,
+		Mode: mode,
+	}
+	if outputWriter != nil {
+		jsonBytes, _ := json.Marshal(info)
+		outputWriter.Write(jsonBytes)
+	}
+	return nil
+}
+
+func (d *DockerClient) SearchInFile(ctx context.Context, containerID, filePath, search string, outputWriter io.Writer) error {
+	cmd := []string{"grep", "-nF", search, filePath}
+	return d.ExecCommand(ctx, containerID, cmd, outputWriter)
+}
+
+func (d *DockerClient) RenameFileDir(ctx context.Context, containerID, path string, newName string, outputWriter io.Writer) error {
+	cmd := []string{"mv", path, newName}
+	return d.ExecCommand(ctx, containerID, cmd, outputWriter)
+}
+
 func (d *DockerClient) RemoveContainer(ctx context.Context, containerId string) error {
 	if _, err := d.dockerClient.ContainerStop(ctx, containerId, client.ContainerStopOptions{}); err != nil {
 		return err
@@ -175,4 +229,47 @@ func (d *DockerClient) RemoveAllContainers(ctx context.Context) {
 		}
 		fmt.Println("Success")
 	}
+}
+
+func (d *DockerClient) StartInteractive(ctx context.Context, containerId string, input io.Reader, output io.Writer) error {
+	execResp, err := d.dockerClient.ExecCreate(ctx, containerId, client.ExecCreateOptions{
+		Cmd:          []string{"node"},
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		TTY:          true,
+	})
+	if err != nil {
+		return err
+	}
+	resp, err := d.dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
+		TTY: true,
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+
+	go func() {
+		io.Copy(resp.Conn, input)
+	}()
+
+	_, err = io.Copy(output, resp.Conn)
+
+	return err
+}
+
+func (d *DockerClient) DeleteContainer(ctx context.Context, containerID string) error {
+	timeout := 0
+	if _, err := d.dockerClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{
+		Timeout: &timeout,
+	}); err != nil {
+		return err
+	}
+
+	_, err := d.dockerClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
+		Force: true,
+	})
+
+	return err
 }

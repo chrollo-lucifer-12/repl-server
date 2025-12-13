@@ -3,130 +3,240 @@ package docker
 import (
 	"bytes"
 	"context"
-	"os"
+	"encoding/json"
 	"testing"
 )
 
-func TestStartContainer(t *testing.T) {
-	d := NewDockerClient()
-	defer d.Stop()
+/*
+------------------------------------
+Helpers
+------------------------------------
+*/
 
+func setupContainer(t *testing.T) (*DockerClient, context.Context, string) {
+	t.Helper()
+
+	d := NewDockerClient()
 	ctx := context.Background()
 
-	containerID := d.StartContainer(ctx, os.Stdout)
+	containerID := d.StartContainer(ctx, nil)
 	if containerID == "" {
-		t.Fatal("Expected container ID, got empty string")
+		t.Fatal("failed to start container")
 	}
 
-	t.Log("Container started with ID:", containerID)
+	t.Cleanup(func() {
+		_ = d.DeleteContainer(ctx, containerID)
+		_ = d.Stop()
+	})
+
+	return d, ctx, containerID
 }
 
-func TestExecCommand(t *testing.T) {
-	d := NewDockerClient()
-	defer d.Stop()
+/*
+------------------------------------
+Tests
+------------------------------------
+*/
 
-	ctx := context.Background()
-	containerID := d.StartContainer(ctx, os.Stdout)
-	if containerID == "" {
-		t.Fatal("Failed to start container")
-	}
-
-	var buf bytes.Buffer
-
-	// Create a file
-	err := d.ExecCommand(ctx, containerID, []string{"touch", "hi.txt"}, &buf)
-	if err != nil {
-		t.Fatal("ExecCommand failed:", err)
-	}
-	t.Log("Created file hi.txt, output:", buf.String())
-
-	// List files
-	buf.Reset()
-	err = d.ExecCommand(ctx, containerID, []string{"ls"}, &buf)
-	if err != nil {
-		t.Fatal("ExecCommand failed:", err)
-	}
-	t.Log("Files in container:", buf.String())
-}
-
-func TestFileManagement(t *testing.T) {
-	d := NewDockerClient()
-	defer d.Stop()
-
-	ctx := context.Background()
-	containerID := d.StartContainer(ctx, os.Stdout)
-	if containerID == "" {
-		t.Fatal("Failed to start container")
-	}
+func TestCreateDir(t *testing.T) {
+	d, ctx, containerID := setupContainer(t)
 
 	var buf bytes.Buffer
-
-	// ---------------------------
-	// Test CreateDir
-	// ---------------------------
-	dirPath := "/code/testdir"
-	err := d.CreateDir(ctx, containerID, dirPath, &buf)
+	err := d.CreateDir(ctx, containerID, "/home/hi/testdir", &buf)
 	if err != nil {
 		t.Fatalf("CreateDir failed: %v", err)
 	}
-	t.Log("CreateDir output:", buf.String())
 
-	// Verify directory exists
 	buf.Reset()
-	err = d.ExecCommand(ctx, containerID, []string{"ls", "/code"}, &buf)
+	err = d.ExecCommand(ctx, containerID, []string{"ls", "/home/hi"}, &buf)
 	if err != nil {
-		t.Fatalf("Listing /code failed: %v", err)
+		t.Fatal(err)
 	}
+
 	if !bytes.Contains(buf.Bytes(), []byte("testdir")) {
-		t.Fatalf("Directory %s not found in /code: %s", dirPath, buf.String())
+		t.Fatalf("directory not created, got: %s", buf.String())
 	}
-	t.Log("/code contents:", buf.String())
+}
 
-	// ---------------------------
-	// Test writing a file
-	// ---------------------------
-	filePath := dirPath + "/hello.txt"
-	fileContent := "Hello, Docker!"
+func TestWriteAndReadFile(t *testing.T) {
+	d, ctx, containerID := setupContainer(t)
 
-	// Write file using echo safely
-	writeCmd := []string{"sh", "-c", "echo \"" + fileContent + "\" > " + filePath}
-	buf.Reset()
-	if err := d.ExecCommand(ctx, containerID, writeCmd, &buf); err != nil {
-		t.Fatalf("Writing file failed: %v", err)
+	var buf bytes.Buffer
+	path := "/home/hi/hello.txt"
+	content := "hello docker"
+
+	err := d.WriteFile(ctx, containerID, path, content, &buf)
+	if err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
 	}
-	t.Log("WriteFile output:", buf.String())
 
-	// ---------------------------
-	// Test ReadFile
-	// ---------------------------
 	buf.Reset()
-	err = d.ReadFile(ctx, containerID, filePath, &buf)
+	err = d.ReadFile(ctx, containerID, path, &buf)
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
-	if buf.String() != fileContent+"\n" {
-		t.Fatalf("Unexpected file content. Got: %q, Expected: %q", buf.String(), fileContent+"\n")
-	}
-	t.Log("ReadFile output:", buf.String())
 
-	// ---------------------------
-	// Test RemoveFile
-	// ---------------------------
-	buf.Reset()
-	err = d.RemoveFile(ctx, filePath, containerID, &buf)
-	if err != nil {
-		t.Fatalf("RemoveFile failed: %v", err)
+	if buf.String() != content {
+		t.Fatalf("unexpected content: %q", buf.String())
 	}
-	t.Log("RemoveFile output:", buf.String())
+}
 
-	// Verify file removed
-	buf.Reset()
-	err = d.ExecCommand(ctx, containerID, []string{"ls", dirPath}, &buf)
+// func TestListFiles(t *testing.T) {
+// 	d, ctx, containerID := setupContainer(t)
+
+// 	_ = d.WriteFile(ctx, containerID, "/home/hi/a.txt", "a", nil)
+// 	_ = d.WriteFile(ctx, containerID, "/home/hi/b.txt", "b", nil)
+
+// 	var buf bytes.Buffer
+// 	err := d.ListFiles(ctx, containerID, "/home/hi", &buf)
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	var files []FileInfo
+// 	if err := json.Unmarshal(buf.Bytes(), &files); err != nil {
+// 		t.Fatal(err)
+// 	}
+
+// 	if len(files) < 2 {
+// 		t.Fatalf("expected files, got %+v", files)
+// 	}
+// }
+
+func TestStatFile(t *testing.T) {
+	d, ctx, containerID := setupContainer(t)
+
+	_ = d.WriteFile(ctx, containerID, "/home/hi/stat.txt", "data", nil)
+
+	var buf bytes.Buffer
+	err := d.StatFile(ctx, containerID, "/home/hi/stat.txt", &buf)
 	if err != nil {
-		t.Fatalf("Listing directory after removal failed: %v", err)
+		t.Fatal(err)
 	}
-	if bytes.Contains(buf.Bytes(), []byte("hello.txt")) {
-		t.Fatal("File was not removed")
+
+	var info FileInfo
+	if err := json.Unmarshal(buf.Bytes(), &info); err != nil {
+		t.Fatal(err)
 	}
-	t.Log(dirPath, "contents after removal:", buf.String())
+
+	if info.Size == 0 {
+		t.Fatal("file size should not be zero")
+	}
+}
+
+func TestSearchInFile(t *testing.T) {
+	d, ctx, containerID := setupContainer(t)
+
+	content := "hello\nworld\nhello again"
+	_ = d.WriteFile(ctx, containerID, "/home/hi/search.txt", content, nil)
+
+	var buf bytes.Buffer
+	err := d.SearchInFile(ctx, containerID, "/home/hi/search.txt", "hello", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Contains(buf.Bytes(), []byte("hello")) {
+		t.Fatal("search term not found")
+	}
+}
+
+func TestRenameFileDir(t *testing.T) {
+	d, ctx, containerID := setupContainer(t)
+
+	_ = d.WriteFile(ctx, containerID, "/home/hi/old.txt", "x", nil)
+
+	var buf bytes.Buffer
+	err := d.RenameFileDir(ctx, containerID, "/home/hi/old.txt", "/home/hi/new.txt", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf.Reset()
+	_ = d.ExecCommand(ctx, containerID, []string{"ls", "/home/hi"}, &buf)
+
+	if !bytes.Contains(buf.Bytes(), []byte("new.txt")) {
+		t.Fatal("file rename failed")
+	}
+}
+
+func TestRemoveFile(t *testing.T) {
+	d, ctx, containerID := setupContainer(t)
+
+	_ = d.WriteFile(ctx, containerID, "/home/hi/delete.txt", "bye", nil)
+
+	var buf bytes.Buffer
+	err := d.RemoveFile(ctx, "/home/hi/delete.txt", containerID, &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf.Reset()
+	_ = d.ExecCommand(ctx, containerID, []string{"ls", "/home/hi"}, &buf)
+
+	if bytes.Contains(buf.Bytes(), []byte("delete.txt")) {
+		t.Fatal("file was not deleted")
+	}
+}
+
+func TestNodeJSProjectRun(t *testing.T) {
+	d, ctx, containerID := setupContainer(t)
+
+	projectDir := "/home/hi/nodeapp"
+	var buf bytes.Buffer
+
+	// 1. Create project directory
+	if err := d.CreateDir(ctx, containerID, projectDir, &buf); err != nil {
+		t.Fatalf("CreateDir failed: %v", err)
+	}
+
+	// 2. npm init -y
+	buf.Reset()
+	err := d.ExecCommand(ctx, containerID,
+		[]string{"sh", "-c", "cd " + projectDir + " && npm init -y"},
+		&buf,
+	)
+	if err != nil {
+		t.Fatalf("npm init failed: %v\n%s", err, buf.String())
+	}
+
+	// 3. install lodash
+	buf.Reset()
+	err = d.ExecCommand(ctx, containerID,
+		[]string{"sh", "-c", "cd " + projectDir + " && npm install lodash"},
+		&buf,
+	)
+	if err != nil {
+		t.Fatalf("npm install failed: %v\n%s", err, buf.String())
+	}
+
+	// 4. create index.js
+	jsCode := `
+console.log("hi");
+`
+	buf.Reset()
+	err = d.WriteFile(ctx, containerID, projectDir+"/index.js", jsCode, &buf)
+	if err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// 5. run node index.js
+	buf.Reset()
+	err = d.ExecCommand(ctx, containerID,
+		[]string{"sh", "-c", "cd " + projectDir + " && node index.js"},
+		&buf,
+	)
+	if err != nil {
+		t.Fatalf("node run failed: %v\n%s", err, buf.String())
+	}
+
+	// 6. verify output
+	output := buf.String()
+	expected := "RESULT: 2,4,6,8"
+
+	if !bytes.Contains([]byte(output), []byte(expected)) {
+		t.Fatalf("unexpected output:\n%s\nexpected to contain:\n%s", output, expected)
+	}
+
+	t.Log("Node app output:", output)
 }
