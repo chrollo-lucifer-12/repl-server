@@ -39,7 +39,7 @@ func (d *DockerClient) Stop() error {
 }
 
 func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Writer) string {
-	imageName := "node:lts-alpine3.23"
+	imageName := "node:20-bullseye"
 	out, err := d.dockerClient.ImagePull(ctx, imageName, client.ImagePullOptions{})
 	if err != nil {
 		panic(err)
@@ -58,7 +58,6 @@ func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Write
 			Binds: []string{
 				hostDir + ":" + containerDir,
 			},
-			NetworkMode: "none",
 		},
 	})
 	if err != nil {
