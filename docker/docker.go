@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/chrollo-lucifer-12/repl/utils"
 	"github.com/moby/moby/api/types/container"
@@ -126,21 +128,13 @@ func (d *DockerClient) RemoveFile(ctx context.Context, path string, containerId 
 }
 
 func (d *DockerClient) ListFiles(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
-
-	cmd := []string{
-		"sh", "-c",
-		fmt.Sprintf(`
-for f in %s/* %s/.*; do
-  [ -e "$f" ] || continue
-  stat -c '{"name":"%%n","type":"%%F","size":%%s,"mode":"%%a"}' "$f"
-done
-`, path, path),
-	}
+	cmd := []string{"ls", "-lA", "--color=never", path}
 
 	var buf bytes.Buffer
 	if err := d.ExecCommand(ctx, containerID, cmd, &buf); err != nil {
 		return err
 	}
+
 	lines := bytes.Split(buf.Bytes(), []byte("\n"))
 	var files []FileInfo
 
@@ -151,8 +145,9 @@ done
 
 		fields := bytes.Fields(line)
 		if len(fields) < 9 {
-			continue
+			continue // skip invalid lines
 		}
+
 		mode := string(fields[0])
 		size := utils.BytesToInt64(fields[4])
 		name := string(fields[8])
@@ -160,6 +155,7 @@ done
 		if mode[0] == 'd' {
 			fileType = "dir"
 		}
+
 		files = append(files, FileInfo{
 			Name: name,
 			Type: fileType,
@@ -168,7 +164,7 @@ done
 		})
 	}
 
-	jsonBytes, _ := json.Marshal(files)
+	jsonBytes, _ := json.MarshalIndent(files, "", "  ")
 	if outputWriter != nil {
 		outputWriter.Write(jsonBytes)
 	}
@@ -181,16 +177,26 @@ func (d *DockerClient) StatFile(ctx context.Context, containerID, path string, o
 	if err := d.ExecCommand(ctx, containerID, cmd, &buf); err != nil {
 		return err
 	}
-	var fileType string
-	var size int64
-	var mode string
-	fmt.Sscanf(buf.String(), "%s %d %s", &fileType, &size, &mode)
+	output := strings.TrimSpace(buf.String())
+	parts := strings.Fields(output)
+	if len(parts) < 3 {
+		return fmt.Errorf("unexpected stat output: %q", output)
+	}
+
+	fileType := parts[0]
+	size, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid file size: %v", err)
+	}
+	mode := parts[2]
+
 	info := &FileInfo{
 		Name: path,
 		Type: fileType,
 		Size: size,
 		Mode: mode,
 	}
+
 	if outputWriter != nil {
 		jsonBytes, _ := json.Marshal(info)
 		outputWriter.Write(jsonBytes)
@@ -231,8 +237,9 @@ func (d *DockerClient) RemoveAllContainers(ctx context.Context) {
 	}
 }
 
-func (d *DockerClient) StartInteractive(ctx context.Context, containerId string, input io.Reader, output io.Writer) error {
-	execResp, err := d.dockerClient.ExecCreate(ctx, containerId, client.ExecCreateOptions{
+func (d *DockerClient) StartInteractive(ctx context.Context, containerID string, input io.Reader, output io.Writer) error {
+
+	execResp, err := d.dockerClient.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          []string{"node"},
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -240,23 +247,40 @@ func (d *DockerClient) StartInteractive(ctx context.Context, containerId string,
 		TTY:          true,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("ExecCreate failed: %w", err)
 	}
-	resp, err := d.dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
+
+	hijackedResp, err := d.dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
+
 		TTY: true,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("ExecAttach failed: %w", err)
 	}
-	defer resp.Close()
+	defer hijackedResp.Close()
 
 	go func() {
-		io.Copy(resp.Conn, input)
+		if input != nil {
+			io.Copy(hijackedResp.Conn, input)
+		}
 	}()
 
-	_, err = io.Copy(output, resp.Conn)
+	if output != nil {
+		_, err = io.Copy(output, hijackedResp.Conn)
+		if err != nil {
+			return fmt.Errorf("io.Copy failed: %w", err)
+		}
+	}
 
-	return err
+	inspectResp, err := d.dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("ContainerExecInspect failed: %w", err)
+	}
+	if inspectResp.ExitCode != 0 {
+		return fmt.Errorf("node exited with code %d", inspectResp.ExitCode)
+	}
+
+	return nil
 }
 
 func (d *DockerClient) DeleteContainer(ctx context.Context, containerID string) error {
