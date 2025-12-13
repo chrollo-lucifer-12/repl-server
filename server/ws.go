@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -15,6 +16,12 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
+}
+
+var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string {
+	return ansi.ReplaceAllString(s, "")
 }
 
 func (s *Server) wsHandler(c *gin.Context) {
@@ -46,15 +53,17 @@ func (s *Server) wsHandler(c *gin.Context) {
 				continue
 			}
 
-			s.l.Info("executing command ", cmd)
+			s.l.Info("executing command:", cmd)
 			res, err := s.t.Run(cmd)
 			if err != nil {
 				s.l.Error("execution error:", err)
 			}
 
+			cleanRes := stripANSI(res)
+
 			response := map[string]interface{}{
 				"type":   "response",
-				"result": res,
+				"result": cleanRes,
 			}
 
 			formatted, err := json.MarshalIndent(response, "", "  ")

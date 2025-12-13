@@ -19,9 +19,6 @@ func NewServer(l logger.Logger, t terminal.Terminal) ServerManager {
 }
 
 func (s *Server) Start() error {
-	s.r.GET("/me", func(c *gin.Context) {
-		c.Writer.Write([]byte("hi"))
-	})
 	go func() {
 		if err := s.t.Start(); err != nil {
 			s.l.Error("terminal start error:", err)
