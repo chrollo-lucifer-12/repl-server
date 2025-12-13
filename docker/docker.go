@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/chrollo-lucifer-12/repl/utils"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
@@ -46,10 +47,28 @@ func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Write
 	if _, err := d.dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		panic(err)
 	}
-	setUp := []string{"sh", "-c", "mkdir -p code"}
+	setUp := []string{}
 	d.ExecCommand(ctx, resp.ID, setUp, outputWriter)
 
 	return resp.ID
+}
+
+func (d *DockerClient) ReadFile(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
+	cmd := []string{"cat", path}
+	if err := d.ExecCommand(ctx, containerID, cmd, outputWriter); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *DockerClient) CreateDir(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
+	cmd := []string{"sh", "-c", "mkdir -p " + path}
+	return d.ExecCommand(ctx, containerID, cmd, outputWriter)
+}
+
+func (d *DockerClient) RemoveFile(ctx context.Context, path string, containerId string, outputWriter io.Writer) error {
+	cmd := []string{"rm", "-f", path}
+	return d.ExecCommand(ctx, containerId, cmd, outputWriter)
 }
 
 func (d *DockerClient) ExecCommand(ctx context.Context, containerId string, cmd []string, outputWriter io.Writer) error {
@@ -67,8 +86,7 @@ func (d *DockerClient) ExecCommand(ctx context.Context, containerId string, cmd 
 	}
 	defer resp.Close()
 
-	io.Copy(outputWriter, resp.Reader)
-	return nil
+	return utils.ReadDockerOutput(resp.Reader, outputWriter)
 }
 
 func (d *DockerClient) RemoveContainer(ctx context.Context, containerId string) error {
