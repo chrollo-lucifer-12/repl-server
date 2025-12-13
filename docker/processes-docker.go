@@ -64,7 +64,7 @@ func (d *DockerClient) StartInteractiveRepl(ctx context.Context, containerId str
 	return nil
 }
 
-func (d *DockerClient) StartLongRunningProcess(ctx context.Context, containerID string, cmd []string, output io.Writer) (string, error) {
+func (d *DockerClient) StartLongRunningProcess(ctx context.Context, containerID string, cmd []string, outputWriter io.Writer) (string, error) {
 
 	execResp, err := d.dockerClient.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          cmd,
@@ -80,8 +80,8 @@ func (d *DockerClient) StartLongRunningProcess(ctx context.Context, containerID 
 
 	go func() {
 		defer hijackedResp.Close()
-		if output != nil {
-			io.Copy(output, hijackedResp.Reader)
+		if outputWriter != nil {
+			io.Copy(outputWriter, hijackedResp.Reader)
 		}
 	}()
 

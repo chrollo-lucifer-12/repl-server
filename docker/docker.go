@@ -32,7 +32,7 @@ func (d *DockerClient) Stop() error {
 	return d.dockerClient.Close()
 }
 
-func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Writer) string {
+func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Writer, userId string) string {
 	imageName := "node:20-bullseye"
 	out, err := d.dockerClient.ImagePull(ctx, imageName, client.ImagePullOptions{})
 	if err != nil {
@@ -41,9 +41,9 @@ func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Write
 	defer out.Close()
 	io.Copy(os.Stdout, out)
 
-	hostDir := "/var/repl/users/" + "45"
+	hostDir := "/var/repl/users/" + userId
 	os.MkdirAll(hostDir, 0755)
-	containerDir := "/home/" + "hi"
+	containerDir := "/home/" + userId
 
 	resp, err := d.dockerClient.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Image:  imageName,
@@ -51,6 +51,13 @@ func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Write
 		HostConfig: &container.HostConfig{
 			Binds: []string{
 				hostDir + ":" + containerDir,
+			},
+			Resources: container.Resources{
+				Memory:     512 * 1024 * 1024,
+				MemorySwap: 512 * 1024 * 1024,
+				CPUShares:  512,
+				CPUQuota:   50000,
+				CPUPeriod:  100000,
 			},
 		},
 	})

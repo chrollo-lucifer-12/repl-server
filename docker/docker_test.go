@@ -18,7 +18,7 @@ func TestDockerClientWithNodeJSProject(t *testing.T) {
 	// Start container
 	t.Log("Starting container...")
 	var startBuf bytes.Buffer
-	containerID := client.StartContainer(ctx, &startBuf)
+	containerID := client.StartContainer(ctx, &startBuf, "123")
 	if containerID == "" {
 		t.Fatal("Failed to start container")
 	}
@@ -428,7 +428,7 @@ func TestContainerLifecycle(t *testing.T) {
 
 	// Start container
 	var buf bytes.Buffer
-	containerID := client.StartContainer(ctx, &buf)
+	containerID := client.StartContainer(ctx, &buf, "123")
 	if containerID == "" {
 		t.Fatal("Failed to start container")
 	}
