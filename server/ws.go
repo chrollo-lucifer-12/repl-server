@@ -1,14 +1,30 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"regexp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+type wsWriter struct {
+	conn *websocket.Conn
+}
+
+func (w *wsWriter) Write(p []byte) (int, error) {
+	message := map[string]interface{}{
+		"type": "output",
+		"data": string(p),
+	}
+	err := w.conn.WriteJSON(message)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -27,54 +43,102 @@ func stripANSI(s string) string {
 func (s *Server) wsHandler(c *gin.Context) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Println(err)
+		s.l.Error("ws upgrade failed:", err)
 		return
 	}
-	s.l.Info("new connection :", conn.RemoteAddr().String())
 	defer conn.Close()
+
+	userId := "user-123"
+
+	ctx := context.Background()
+
+	writer := &wsWriter{conn: conn}
+
+	containerID := s.d.StartContainer(ctx, writer, userId)
+	s.l.Info("container started:", containerID)
+
+	defer func() {
+		s.l.Info("ws closed, container:", containerID)
+	}()
 
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			s.l.Error("read error:", err)
+			s.l.Error("ws read error:", err)
 			return
 		}
 
-		var msgData map[string]interface{}
+		var msgData map[string]string
 		if err := json.Unmarshal(msg, &msgData); err != nil {
-			s.l.Error("invalid JSON message:", err)
+			writer.Write([]byte("invalid JSON\n"))
 			continue
 		}
 
-		if msgData["type"] == "execute" {
-			cmd, ok := msgData["command"].(string)
-			if !ok {
-				s.l.Error("invalid command format")
-				continue
-			}
+		switch msgData["type"] {
 
-			s.l.Info("executing command:", cmd)
-			res, err := s.t.Run(cmd)
-			if err != nil {
-				s.l.Error("execution error:", err)
-			}
+		case "write_file":
+			_ = s.d.WriteFile(
+				ctx,
+				userId,
+				msgData["path"],
+				msgData["content"],
+				writer,
+			)
 
-			cleanRes := stripANSI(res)
+		case "read_file":
+			_ = s.d.ReadFile(
+				ctx,
+				userId,
+				msgData["path"],
+				writer,
+			)
 
-			response := map[string]interface{}{
-				"type":   "response",
-				"result": cleanRes,
-			}
+		case "list_files":
+			_ = s.d.ListFiles(
+				ctx,
+				userId,
+				msgData["path"],
+				writer,
+			)
 
-			formatted, err := json.MarshalIndent(response, "", "  ")
-			if err != nil {
-				s.l.Error("json marshal error:", err)
-				continue
-			}
+		case "remove_file":
+			_ = s.d.RemoveFile(
+				ctx,
+				msgData["path"],
+				userId,
+				writer,
+			)
 
-			if err := conn.WriteMessage(websocket.TextMessage, formatted); err != nil {
-				s.l.Error("write error:", err)
-			}
+		case "stat_file":
+			_ = s.d.StatFile(
+				ctx,
+				userId,
+				msgData["path"],
+				writer,
+			)
+
+		case "search_file":
+			_ = s.d.SearchInFile(
+				ctx,
+				userId,
+				msgData["path"],
+				msgData["search"],
+				writer,
+			)
+
+		case "rename_file":
+			_ = s.d.RenameFileDir(
+				ctx,
+				userId,
+				msgData["path"],
+				msgData["new_name"],
+				writer,
+			)
+		case "create_dir":
+			_ = s.d.CreateDir(ctx, userId, msgData["path"], writer)
+
+		default:
+			writer.Write([]byte("unknown message type\n"))
 		}
 	}
 }

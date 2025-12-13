@@ -8,6 +8,10 @@ import (
 )
 
 func (d *DockerClient) RemoveContainer(ctx context.Context, containerId string) error {
+	_, ok := d.containers.Load(containerId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	if _, err := d.dockerClient.ContainerStop(ctx, containerId, client.ContainerStopOptions{}); err != nil {
 		return err
 	}
@@ -30,15 +34,19 @@ func (d *DockerClient) RemoveAllContainers(ctx context.Context) {
 	}
 }
 
-func (d *DockerClient) DeleteContainer(ctx context.Context, containerID string) error {
+func (d *DockerClient) DeleteContainer(ctx context.Context, containerId string) error {
+	_, ok := d.containers.Load(containerId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	timeout := 0
-	if _, err := d.dockerClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{
+	if _, err := d.dockerClient.ContainerStop(ctx, containerId, client.ContainerStopOptions{
 		Timeout: &timeout,
 	}); err != nil {
 		return err
 	}
 
-	_, err := d.dockerClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
+	_, err := d.dockerClient.ContainerRemove(ctx, containerId, client.ContainerRemoveOptions{
 		Force: true,
 	})
 

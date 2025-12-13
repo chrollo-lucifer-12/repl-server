@@ -2,8 +2,11 @@ package docker
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
@@ -16,8 +19,14 @@ type FileInfo struct {
 	Mode string `json:"mode"`
 }
 
+type ContainerInfo struct {
+	createdAt time.Time
+	userId    string
+}
+
 type DockerClient struct {
 	dockerClient *client.Client
+	containers   sync.Map
 }
 
 func NewDockerClient() *DockerClient {
@@ -68,6 +77,10 @@ func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Write
 	if _, err := d.dockerClient.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
 		panic(err)
 	}
+
+	fmt.Println(resp.ID)
+
+	d.containers.Store(userId, resp.ID)
 
 	return resp.ID
 }

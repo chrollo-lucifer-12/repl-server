@@ -14,41 +14,61 @@ import (
 
 func (d *DockerClient) WriteFile(
 	ctx context.Context,
-	containerID, path, content string,
+	userId, path, content string,
 	outputWriter io.Writer,
 ) error {
-
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
+	fmt.Println(containerId)
 	cmd := []string{
 		"sh",
 		"-c",
 		fmt.Sprintf("cat > %s << 'EOF'\n%s\nEOF", path, content),
 	}
-	return d.ExecCommand(ctx, containerID, cmd, outputWriter)
+	return d.ExecCommand(ctx, containerId.(string), cmd, outputWriter)
 }
 
-func (d *DockerClient) ReadFile(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
+func (d *DockerClient) ReadFile(ctx context.Context, userId, path string, outputWriter io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	cmd := []string{"cat", path}
-	if err := d.ExecCommand(ctx, containerID, cmd, outputWriter); err != nil {
+	if err := d.ExecCommand(ctx, containerId.(string), cmd, outputWriter); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (d *DockerClient) CreateDir(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
+func (d *DockerClient) CreateDir(ctx context.Context, userId, path string, outputWriter io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	cmd := []string{"sh", "-c", "mkdir -p " + path}
-	return d.ExecCommand(ctx, containerID, cmd, outputWriter)
+	return d.ExecCommand(ctx, containerId.(string), cmd, outputWriter)
 }
 
-func (d *DockerClient) RemoveFile(ctx context.Context, path string, containerId string, outputWriter io.Writer) error {
+func (d *DockerClient) RemoveFile(ctx context.Context, path string, userId string, outputWriter io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	cmd := []string{"rm", "-f", path}
-	return d.ExecCommand(ctx, containerId, cmd, outputWriter)
+	return d.ExecCommand(ctx, containerId.(string), cmd, outputWriter)
 }
 
-func (d *DockerClient) ListFiles(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
+func (d *DockerClient) ListFiles(ctx context.Context, userId, path string, outputWriter io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	cmd := []string{"ls", "-lA", "--color=never", path}
 
 	var buf bytes.Buffer
-	if err := d.ExecCommand(ctx, containerID, cmd, &buf); err != nil {
+	if err := d.ExecCommand(ctx, containerId.(string), cmd, &buf); err != nil {
 		return err
 	}
 
@@ -62,7 +82,7 @@ func (d *DockerClient) ListFiles(ctx context.Context, containerID, path string, 
 
 		fields := bytes.Fields(line)
 		if len(fields) < 9 {
-			continue // skip invalid lines
+			continue
 		}
 
 		mode := string(fields[0])
@@ -88,10 +108,14 @@ func (d *DockerClient) ListFiles(ctx context.Context, containerID, path string, 
 	return nil
 }
 
-func (d *DockerClient) StatFile(ctx context.Context, containerID, path string, outputWriter io.Writer) error {
+func (d *DockerClient) StatFile(ctx context.Context, userId, path string, outputWriter io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	cmd := []string{"stat", "-c", "%F %s %a", path}
 	var buf bytes.Buffer
-	if err := d.ExecCommand(ctx, containerID, cmd, &buf); err != nil {
+	if err := d.ExecCommand(ctx, containerId.(string), cmd, &buf); err != nil {
 		return err
 	}
 	output := strings.TrimSpace(buf.String())
@@ -121,12 +145,20 @@ func (d *DockerClient) StatFile(ctx context.Context, containerID, path string, o
 	return nil
 }
 
-func (d *DockerClient) SearchInFile(ctx context.Context, containerID, filePath, search string, outputWriter io.Writer) error {
+func (d *DockerClient) SearchInFile(ctx context.Context, userId, filePath, search string, outputWriter io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	cmd := []string{"grep", "-nF", search, filePath}
-	return d.ExecCommand(ctx, containerID, cmd, outputWriter)
+	return d.ExecCommand(ctx, containerId.(string), cmd, outputWriter)
 }
 
-func (d *DockerClient) RenameFileDir(ctx context.Context, containerID, path string, newName string, outputWriter io.Writer) error {
+func (d *DockerClient) RenameFileDir(ctx context.Context, userId, path string, newName string, outputWriter io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
 	cmd := []string{"mv", path, newName}
-	return d.ExecCommand(ctx, containerID, cmd, outputWriter)
+	return d.ExecCommand(ctx, containerId.(string), cmd, outputWriter)
 }

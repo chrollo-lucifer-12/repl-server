@@ -20,6 +20,7 @@ func (d *DockerClient) ExecCommand(ctx context.Context, containerId string, cmd 
 	}
 	resp, err := d.dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{TTY: true})
 	if err != nil {
+		panic(err)
 		return err
 	}
 	defer resp.Close()
@@ -31,8 +32,12 @@ func (d *DockerClient) ExecCommand(ctx context.Context, containerId string, cmd 
 	return err
 }
 
-func (d *DockerClient) StartInteractiveRepl(ctx context.Context, containerId string, input io.Reader, output io.Writer) error {
-	execResp, err := d.dockerClient.ExecCreate(ctx, containerId, client.ExecCreateOptions{
+func (d *DockerClient) StartInteractiveRepl(ctx context.Context, userId string, input io.Reader, output io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
+	execResp, err := d.dockerClient.ExecCreate(ctx, containerId.(string), client.ExecCreateOptions{
 		Cmd:          []string{"node"},
 		AttachStdout: true,
 		AttachStdin:  true,
@@ -64,9 +69,12 @@ func (d *DockerClient) StartInteractiveRepl(ctx context.Context, containerId str
 	return nil
 }
 
-func (d *DockerClient) StartLongRunningProcess(ctx context.Context, containerID string, cmd []string, outputWriter io.Writer) (string, error) {
-
-	execResp, err := d.dockerClient.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+func (d *DockerClient) StartLongRunningProcess(ctx context.Context, userId string, cmd []string, outputWriter io.Writer) (string, error) {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return "", fmt.Errorf("container was deleted")
+	}
+	execResp, err := d.dockerClient.ExecCreate(ctx, containerId.(string), client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
