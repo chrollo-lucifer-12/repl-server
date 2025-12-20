@@ -1,6 +1,8 @@
 package db
 
 import (
+	"context"
+
 	"github.com/chrollo-lucifer-12/repl/env"
 	"github.com/chrollo-lucifer-12/repl/logger"
 	"gorm.io/driver/postgres"
@@ -10,6 +12,11 @@ import (
 type DB struct {
 	db *gorm.DB
 	l  logger.Logger
+}
+
+type CreatedUser struct {
+	Id    uint
+	Email string
 }
 
 func NewDB(env *env.Env, l logger.Logger) *DB {
@@ -25,4 +32,17 @@ func NewDB(env *env.Env, l logger.Logger) *DB {
 
 	d := &DB{db: db, l: l}
 	return d
+}
+
+func (d *DB) CreateUser(email string, password string) (*CreatedUser, error) {
+	user := User{Email: email, Password: password}
+	ctx := context.Background()
+
+	result := gorm.WithResult()
+	if err := gorm.G[User](d.db, result).Create(ctx, &user); err != nil {
+		return nil, err
+	}
+
+	return &CreatedUser{Id: user.ID, Email: user.Email}, nil
+
 }
