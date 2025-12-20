@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -75,6 +76,18 @@ func (s *Server) wsHandler(c *gin.Context) {
 		}
 
 		switch msgData["type"] {
+
+		case "init_project":
+			{
+				userId := msgData["userId"]
+				userIdUint, _ := strconv.ParseUint(userId, 10, 64)
+				user, err := s.db.FindUser(uint(userIdUint))
+				if err != nil || user == nil {
+					writer.Write([]byte("user not found"))
+					return
+				}
+				s.d.StartContainer(ctx, writer, msgData["userId"])
+			}
 
 		case "write_file":
 			_ = s.d.WriteFile(

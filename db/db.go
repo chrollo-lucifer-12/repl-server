@@ -63,3 +63,12 @@ func (d *DB) CreateProject(slug string, userId uint) (*CreatedProject, error) {
 
 	return &CreatedProject{Slug: project.Slug, Id: project.ID}, nil
 }
+
+func (d *DB) FindUser(userId uint) (*CreatedUser, error) {
+	ctx := context.Background()
+	user, err := gorm.G[User](d.db).First(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &CreatedUser{Id: user.ID, Email: user.Email}, nil
+}
