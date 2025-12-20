@@ -21,6 +21,7 @@ func NewServer(l logger.Logger, d *docker.DockerClient, db *db.DB) ServerManager
 }
 
 func (s *Server) Start() error {
+	s.r.POST("/create-project", s.CreateProjectHandler)
 	s.r.POST("/register", s.RegisterHandler)
 	s.r.GET("/ws", s.wsHandler)
 	s.l.Info("server running on port :", "3000")
