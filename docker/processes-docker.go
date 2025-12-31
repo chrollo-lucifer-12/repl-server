@@ -8,8 +8,12 @@ import (
 	"github.com/moby/moby/client"
 )
 
-func (d *DockerClient) ExecCommand(ctx context.Context, containerId string, cmd []string, outputWriter io.Writer) error {
-	execResp, err := d.dockerClient.ExecCreate(ctx, containerId, client.ExecCreateOptions{
+func (d *DockerClient) ExecCommand(ctx context.Context, userId string, cmd []string, outputWriter io.Writer) error {
+	containerId, ok := d.containers.Load(userId)
+	if !ok {
+		return fmt.Errorf("container was deleted")
+	}
+	execResp, err := d.dockerClient.ExecCreate(ctx, containerId.(string), client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStdin:  true,
@@ -32,24 +36,42 @@ func (d *DockerClient) ExecCommand(ctx context.Context, containerId string, cmd 
 	return err
 }
 
-func (d *DockerClient) StartInteractiveRepl(ctx context.Context, userId string, input io.Reader, output io.Writer) error {
+func (d *DockerClient) StartInteractiveRepl(
+	ctx context.Context,
+	userId string,
+	input io.Reader,
+	output io.Writer,
+) error {
+
 	containerId, ok := d.containers.Load(userId)
 	if !ok {
 		return fmt.Errorf("container was deleted")
 	}
-	execResp, err := d.dockerClient.ExecCreate(ctx, containerId.(string), client.ExecCreateOptions{
-		Cmd:          []string{"node"},
-		AttachStdout: true,
-		AttachStdin:  true,
-		TTY:          true,
-	})
+
+	execResp, err := d.dockerClient.ExecCreate(
+		ctx,
+		containerId.(string),
+		client.ExecCreateOptions{
+			Cmd:          []string{"sh"},
+			AttachStdout: true,
+			AttachStdin:  true,
+			TTY:          true,
+		},
+	)
 	if err != nil {
 		return err
 	}
 
-	hijackedResp, err := d.dockerClient.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{
-		TTY: true,
-	})
+	hijackedResp, err := d.dockerClient.ExecAttach(
+		ctx,
+		execResp.ID,
+		client.ExecAttachOptions{
+			TTY: true,
+		},
+	)
+	if err != nil {
+		return err
+	}
 	defer hijackedResp.Close()
 
 	go func() {
@@ -59,13 +81,9 @@ func (d *DockerClient) StartInteractiveRepl(ctx context.Context, userId string, 
 	}()
 
 	if output != nil {
-		_, err = io.Copy(output, hijackedResp.Conn)
+		_, _ = io.Copy(output, hijackedResp.Conn)
 	}
 
-	inspectResp, err := d.dockerClient.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
-	if inspectResp.ExitCode != 0 {
-		return fmt.Errorf("node exited with code %d", inspectResp.ExitCode)
-	}
 	return nil
 }
 

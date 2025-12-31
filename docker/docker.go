@@ -48,7 +48,7 @@ func (d *DockerClient) StartContainer(ctx context.Context, outputWriter io.Write
 		panic(err)
 	}
 	defer out.Close()
-	io.Copy(os.Stdout, out)
+	io.Copy(outputWriter, out)
 
 	hostDir := "/var/repl/users/" + userId
 	os.MkdirAll(hostDir, 0755)

@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
-	"regexp"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -35,32 +35,23 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
-
-func stripANSI(s string) string {
-	return ansi.ReplaceAllString(s, "")
-}
-
 func (s *Server) wsHandler(c *gin.Context) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		s.l.Error("ws upgrade failed:", err)
 		return
 	}
-	defer conn.Close()
 
-	userId := "user-123"
+	defer conn.Close()
 
 	ctx := context.Background()
 
 	writer := &wsWriter{conn: conn}
 
-	containerID := s.d.StartContainer(ctx, writer, userId)
-	s.l.Info("container started:", containerID)
+	pr, pw := io.Pipe()
+	defer pw.Close()
 
-	defer func() {
-		s.l.Info("ws closed, container:", containerID)
-	}()
+	var replStarted bool
 
 	for {
 		_, msg, err := conn.ReadMessage()
@@ -75,11 +66,12 @@ func (s *Server) wsHandler(c *gin.Context) {
 			continue
 		}
 
+		userId := msgData["userId"]
+
 		switch msgData["type"] {
 
 		case "init_project":
 			{
-				userId := msgData["userId"]
 				userIdUint, _ := strconv.ParseUint(userId, 10, 64)
 				user, err := s.db.FindUser(uint(userIdUint))
 				if err != nil || user == nil {
@@ -87,6 +79,27 @@ func (s *Server) wsHandler(c *gin.Context) {
 					return
 				}
 				s.d.StartContainer(ctx, writer, msgData["userId"])
+			}
+
+		case "react_project":
+			{
+				if replStarted {
+					continue
+				}
+				replStarted = true
+				go func() {
+					err := s.d.StartInteractiveRepl(ctx, userId, pr, writer)
+					if err != nil {
+						writer.Write([]byte(err.Error()))
+					}
+				}()
+
+				pw.Write([]byte("npm create vite@latest my-app -- --template react\n"))
+			}
+
+		case "input":
+			if data, ok := msgData["data"]; ok {
+				pw.Write([]byte(data))
 			}
 
 		case "write_file":
@@ -149,6 +162,9 @@ func (s *Server) wsHandler(c *gin.Context) {
 			)
 		case "create_dir":
 			_ = s.d.CreateDir(ctx, userId, msgData["path"], writer)
+
+		case "resize_terminal":
+			_ = s.d.ResizeTerminal(ctx, userId, msgData["rows"], msgData["cols"])
 
 		default:
 			writer.Write([]byte("unknown message type\n"))
